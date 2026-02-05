@@ -1,85 +1,68 @@
+# main.py
 import streamlit as st
-import wikipedia
-from wikipedia.exceptions import PageError, DisambiguationError
+import json
+import random
 
-# ----------------- CONFIG -----------------
-st.set_page_config(
-    page_title="Deutsche Geschichte Timeline",
-    page_icon="🇩🇪",
-    layout="centered"
-)
+# ========================
+# Utils
+# ========================
+def load_epoche(epoche_name):
+    with open(f"data/{epoche_name}.json", encoding="utf-8") as f:
+        return json.load(f)
 
-st.title("🇩🇪 Deutsche Geschichte (1900–2025)")
-st.write(
-    "Diese App zeigt historische Ereignisse in Deutschland für ein ausgewähltes Jahr. "
-    "Die Daten werden **dynamisch von Wikipedia** abgerufen."
-)
+def ask_question(question_data):
+    st.write(f"**{question_data['frage']}**")
+    options = question_data["antworten"]
+    user_answer = st.radio("Wähle die richtige Antwort:", options)
+    if st.button("Antwort prüfen"):
+        if user_answer == question_data["richtige_antwort"]:
+            st.success("✅ Richtig!")
+            return True
+        else:
+            st.error(f"❌ Falsch! Richtige Antwort: {question_data['richtige_antwort']}")
+            return False
 
-# ----------------- UI: Jahr auswählen -----------------
-year = st.slider(
-    "Wähle ein Jahr",
-    min_value=1900,
-    max_value=2025,
-    value=1945,
-    step=1
-)
+# ========================
+# Session State Setup
+# ========================
+if "epoche_index" not in st.session_state:
+    st.session_state.epoche_index = 0
+if "quiz_index" not in st.session_state:
+    st.session_state.quiz_index = 0
+if "score" not in st.session_state:
+    st.session_state.score = 0
 
-# ----------------- WIKIPEDIA CONFIG -----------------
-wikipedia.set_lang("de")
+# ========================
+# Epochen
+# ========================
+epochen = ["steinzeit", "antike", "mittelalter"]
+current_epoche = epochen[st.session_state.epoche_index]
+content = load_epoche(current_epoche)
 
-# ----------------- DATEN ABRUFEN -----------------
-@st.cache_data(show_spinner=False)
-def fetch_events(year: int) -> list[str]:
-    """
-    Ruft Wikipedia-Seite für das Jahr ab und filtert Deutschland-bezogene Ereignisse.
-    """
-    try:
-        page = wikipedia.page(str(year))
-        content = page.content
+st.title("🌍 Geschichtsreise – Zeitreise durch die Weltgeschichte")
 
-        # Keywords für Deutschland-Bezug
-        keywords = [
-            "Deutschland", "deutsch", "Deutsches Reich",
-            "Bundesrepublik", "DDR", "Berlin",
-            "Kaiserreich", "Weimar", "NS", "Nazi"
-        ]
+st.header(f"Epoche: {content['epoche_name']}")
+st.image(f"assets/images/{current_epoche}.jpg", use_column_width=True)
 
-        events = []
-        for line in content.split("\n"):
-            if any(k.lower() in line.lower() for k in keywords):
-                if len(line.strip()) > 30:
-                    events.append(line.strip())
+# Story
+st.markdown(content["story"])
 
-        return events
-
-    except DisambiguationError:
-        return ["⚠️ Mehrdeutiger Wikipedia-Eintrag für dieses Jahr."]
-    except PageError:
-        return []
-    except Exception as e:
-        return [f"❌ Fehler beim Laden der Daten: {e}"]
-
-# ----------------- LOGIK -----------------
-with st.spinner("Lade Daten von Wikipedia …"):
-    events = fetch_events(year)
-
-# ----------------- AUSGABE -----------------
-st.subheader(f"Ereignisse in Deutschland im Jahr {year}")
-
-if not events:
-    st.info("Keine Deutschland-bezogenen Ereignisse gefunden.")
+# Quiz
+if st.session_state.quiz_index < len(content["quiz"]):
+    question_data = content["quiz"][st.session_state.quiz_index]
+    if ask_question(question_data):
+        st.session_state.score += 1
+        st.session_state.quiz_index += 1
 else:
-    # Alle Ereignisse zu einem Text zusammenfassen
-    text = f"Im Jahr {year} gab es in Deutschland folgende bedeutende Ereignisse: " + " ".join(events[:15])
-    # Optional: Text auf max. Länge kürzen
-    MAX_CHARS = 1500
-    if len(text) > MAX_CHARS:
-        text = text[:MAX_CHARS] + " …"
-    st.write(text)
+    st.success(f"Du hast die Epoche '{content['epoche_name']}' abgeschlossen! ✅")
+    if st.session_state.epoche_index + 1 < len(epochen):
+        if st.button("Zur nächsten Epoche reisen"):
+            st.session_state.epoche_index += 1
+            st.session_state.quiz_index = 0
+    else:
+        st.balloons()
+        st.success(f"🎉 Herzlichen Glückwunsch! Du hast alle Epochen abgeschlossen. Punkte: {st.session_state.score}")
 
-# ----------------- FOOTER -----------------
-st.divider()
-st.caption(
-    "Datenquelle: Wikipedia (automatisch abgerufen) · "
-    "Demo-App mit Streamlit & Python"
-)
+st.sidebar.title("Spielstatus")
+st.sidebar.write(f"Aktueller Punktestand: {st.session_state.score}")
+st.sidebar.write(f"Epoche: {current_epoche.capitalize()}")
