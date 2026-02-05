@@ -1,68 +1,127 @@
-# main.py
 import streamlit as st
-import json
+import matplotlib.pyplot as plt
+import matplotlib.patches as patches
+import wikipedia
+from wikipedia.exceptions import PageError, DisambiguationError
 import random
 
-# ========================
-# Utils
-# ========================
-def load_epoche(epoche_name):
-    with open(f"data/{epoche_name}.json", encoding="utf-8") as f:
-        return json.load(f)
+st.set_page_config(page_title="History Dash", layout="wide")
+st.title("🚀 History Dash – Springe durch die deutsche Geschichte!")
 
-def ask_question(question_data):
-    st.write(f"**{question_data['frage']}**")
-    options = question_data["antworten"]
-    user_answer = st.radio("Wähle die richtige Antwort:", options)
-    if st.button("Antwort prüfen"):
-        if user_answer == question_data["richtige_antwort"]:
-            st.success("✅ Richtig!")
-            return True
-        else:
-            st.error(f"❌ Falsch! Richtige Antwort: {question_data['richtige_antwort']}")
-            return False
+# ---------------- SETTINGS ----------------
+CANVAS_WIDTH = 800
+CANVAS_HEIGHT = 400
+PLAYER_SIZE = 30
+GRAVITY = 2
+JUMP_STRENGTH = -15
+FPS = 30
+SCROLL_SPEED = 10
 
-# ========================
-# Session State Setup
-# ========================
-if "epoche_index" not in st.session_state:
-    st.session_state.epoche_index = 0
-if "quiz_index" not in st.session_state:
-    st.session_state.quiz_index = 0
-if "score" not in st.session_state:
+wikipedia.set_lang("de")
+
+# ---------------- SESSION STATE ----------------
+if "player_y" not in st.session_state:
+    st.session_state.player_y = CANVAS_HEIGHT - PLAYER_SIZE - 50
+    st.session_state.vel_y = 0
+    st.session_state.scroll_x = 0
     st.session_state.score = 0
+    st.session_state.game_over = False
+    st.session_state.events = []
+    st.session_state.event_platforms = []
 
-# ========================
-# Epochen
-# ========================
-epochen = ["steinzeit", "antike", "mittelalter"]
-current_epoche = epochen[st.session_state.epoche_index]
-content = load_epoche(current_epoche)
+# ---------------- FETCH WIKIPEDIA EVENTS ----------------
+@st.cache_data
+def fetch_events(years):
+    events_list = []
+    platforms = []
+    x_pos = 400
+    for y in years:
+        try:
+            page = wikipedia.page(str(y))
+            content = page.content
+            keywords = ["Deutschland", "deutsch", "Berlin", "Bundesrepublik", "DDR",
+                        "NS", "Kaiserreich", "Weimar", "Nazi"]
+            for line in content.split("\n"):
+                if any(k.lower() in line.lower() for k in keywords):
+                    if len(line.strip()) > 30:
+                        events_list.append((y, line.strip()))
+                        # Plattformen werden im Canvas platziert
+                        platforms.append({"x": x_pos, "y": random.randint(250, 350), "text": line.strip()})
+                        x_pos += 300  # Abstand zwischen Plattformen
+                        break
+        except (PageError, DisambiguationError):
+            continue
+    return events_list, platforms
 
-st.title("🌍 Geschichtsreise – Zeitreise durch die Weltgeschichte")
+# Lade Events beim Start
+if not st.session_state.events:
+    years = range(1900, 2026, 5)
+    st.session_state.events, st.session_state.event_platforms = fetch_events(years)
 
-st.header(f"Epoche: {content['epoche_name']}")
-st.image(f"assets/images/{current_epoche}.jpg", use_column_width=True)
+# ---------------- GAME INPUT ----------------
+jump = st.button("Springen (Space)")
 
-# Story
-st.markdown(content["story"])
+# ---------------- GAME LOGIC ----------------
+if not st.session_state.game_over:
+    # Spieler springt
+    if jump and st.session_state.player_y + PLAYER_SIZE >= CANVAS_HEIGHT - 50:
+        st.session_state.vel_y = JUMP_STRENGTH
 
-# Quiz
-if st.session_state.quiz_index < len(content["quiz"]):
-    question_data = content["quiz"][st.session_state.quiz_index]
-    if ask_question(question_data):
-        st.session_state.score += 1
-        st.session_state.quiz_index += 1
-else:
-    st.success(f"Du hast die Epoche '{content['epoche_name']}' abgeschlossen! ✅")
-    if st.session_state.epoche_index + 1 < len(epochen):
-        if st.button("Zur nächsten Epoche reisen"):
-            st.session_state.epoche_index += 1
-            st.session_state.quiz_index = 0
-    else:
-        st.balloons()
-        st.success(f"🎉 Herzlichen Glückwunsch! Du hast alle Epochen abgeschlossen. Punkte: {st.session_state.score}")
+    # Physik
+    st.session_state.vel_y += GRAVITY
+    st.session_state.player_y += st.session_state.vel_y
 
-st.sidebar.title("Spielstatus")
-st.sidebar.write(f"Aktueller Punktestand: {st.session_state.score}")
-st.sidebar.write(f"Epoche: {current_epoche.capitalize()}")
+    # Boden
+    if st.session_state.player_y + PLAYER_SIZE >= CANVAS_HEIGHT - 50:
+        st.session_state.player_y = CANVAS_HEIGHT - PLAYER_SIZE - 50
+        st.session_state.vel_y = 0
+
+    # Scroll
+    st.session_state.scroll_x += SCROLL_SPEED
+
+    # Kollision mit Plattformen / Punkte
+    player_rect = (100, st.session_state.player_y, PLAYER_SIZE, PLAYER_SIZE)
+    for plat in st.session_state.event_platforms:
+        plat_rect = (plat["x"] - st.session_state.scroll_x, plat["y"], 100, 20)
+        px, py, pw, ph = player_rect
+        ox, oy, ow, oh = plat_rect
+        if px + pw > ox and px < ox + ow and py + ph > oy and py < oy + oh:
+            st.session_state.score += 1
+            # Info-Card anzeigen
+            with st.expander(f"Ereignis {st.session_state.score} ({plat['x']}):"):
+                st.write(plat["text"])
+            # Plattform nach vorne verschieben, damit sie nicht erneut Punkte gibt
+            plat["x"] += 10000
+
+    # Game Over: falls Spieler unter Canvas fällt
+    if st.session_state.player_y > CANVAS_HEIGHT:
+        st.session_state.game_over = True
+
+# ---------------- DRAW ----------------
+fig, ax = plt.subplots(figsize=(8, 4))
+ax.set_xlim(0, CANVAS_WIDTH)
+ax.set_ylim(0, CANVAS_HEIGHT)
+ax.set_facecolor("skyblue")
+ax.invert_yaxis()
+
+# Boden
+ax.add_patch(patches.Rectangle((0, CANVAS_HEIGHT-50), CANVAS_WIDTH, 50, color="gray"))
+
+# Spieler
+ax.add_patch(patches.Rectangle((100, st.session_state.player_y), PLAYER_SIZE, PLAYER_SIZE, color="green"))
+
+# Plattformen
+for plat in st.session_state.event_platforms:
+    px = plat["x"] - st.session_state.scroll_x
+    if -100 < px < CANVAS_WIDTH:
+        ax.add_patch(patches.Rectangle((px, plat["y"]), 100, 20, color=random.choice(["red","orange","yellow","blue","purple"])))
+
+# Score
+ax.text(10, 20, f"Score: {st.session_state.score}", fontsize=12, color="white")
+
+ax.axis("off")
+st.pyplot(fig)
+
+# ---------------- GAME OVER ----------------
+if st.session_state.game_over:
+    st.warning("GAME OVER! F5 drücken zum Neustarten")
